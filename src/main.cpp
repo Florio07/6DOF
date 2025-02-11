@@ -1,66 +1,55 @@
-#include <Arduino.h>
 #include <TMCStepper.h>
 
-// Definizione pin
-#define STEP_PIN        3   // Pin STEP collegato al TMC2208
-#define SW_RX          19   // UART RX Mega2560 -> TX TMC2208
-#define SW_TX          18   // UART TX Mega2560 -> RX TMC2208
-#define SERIAL_PORT Serial1 // Porta HardwareSerial per TMC2208
-#define DRIVER_ADDRESS 0b00 // Indirizzo del driver (default)
-#define R_SENSE 0.11f  // Resistenza di sense per il TMC2208
-#define MOTOR_STEPS 5000  // Numero di step prima dell'inversione
-#define STEP_DELAY  160   // Microsecondi tra un passo e l'altro
+// Definizioni dei pin
+#define RX_PIN  19    // RX di Arduino collegato al TX del driver
+#define TX_PIN  18    // TX di Arduino collegato al RX del driver
+#define STEP_PIN 3    // Pin di Step (D3)
 
-TMC2208Stepper driver(&SERIAL_PORT, R_SENSE);
-bool shaft = false;
+// Parametri motore
+#define MAX_STEPS 5000  // Numero di passi prima di invertire la direzione
+
+// Impostazioni del driver
+#define SERIAL_PORT Serial2  // UART per la comunicazione con il TMC2208
+TMC2208Stepper driver(&SERIAL_PORT, 0.11);  // Inizializzazione driver
+
+// Variabili di controllo
+unsigned long stepCount = 0;
+bool reverseDirection = false;
 
 void setup() {
-    Serial.begin(9600);
-    delay(1000);
+  // Seriali
+  Serial.begin(115200);
+  SERIAL_PORT.begin(115200);  // Comunicazione con il driver
 
-    pinMode(STEP_PIN, OUTPUT);
-    
-    // Avvio comunicazione con il driver
-    SERIAL_PORT.begin(9600); // change to 115200 after testing
-    driver.begin();
-    
-    // Forza la modalità UART
-    driver.pdn_disable(true);      // Disabilita il controllo PDN
-    driver.mstep_reg_select(true); // Abilita il controllo via registro UART
-    
-    // Configurazione del driver
-    driver.rms_current(1000);
-    driver.microsteps(16);
-    driver.pwm_autoscale(true);
+  // Configurazione pin
+  pinMode(STEP_PIN, OUTPUT);
 
-    // Controllo connessione UART
-    Serial.print("Versione driver: ");
-    Serial.println(driver.version());
-
-    // Verifica configurazione
-    Serial.print("GCONF: ");
-    Serial.println(driver.GCONF(), BIN);
-
-    delay(100); // Attesa per stabilizzazione
-    driver.shaft(shaft);
-    delay(10);
-    driver.shaft(shaft);
+  // Inizializzazione driver TMC2208
+  driver.begin();
+  driver.toff(4);            // Abilita il driver
+  driver.rms_current(1000);  // Imposta corrente a 1A RMS
+  driver.microsteps(16);     // Imposta micropassi a 16
+  driver.pwm_autoscale(true);  // Abilita modalità stealthChop
+  
+  // Imposta direzione iniziale
+  driver.shaft(reverseDirection);  
 }
 
 void loop() {
-    for (uint16_t i = 0; i < MOTOR_STEPS; i++) {
-        digitalWrite(STEP_PIN, HIGH);
-        delayMicroseconds(STEP_DELAY);
-        digitalWrite(STEP_PIN, LOW);
-        delayMicroseconds(STEP_DELAY);
-    }
+  // Se abbiamo raggiunto 5000 passi, invertiamo la direzione via UART
+  if (stepCount >= MAX_STEPS) {
+    reverseDirection = !reverseDirection;   // Cambia direzione
+    driver.shaft(reverseDirection);         // Invia il comando al driver
+    stepCount = 0;                           // Reset contatore passi
+    delay(500);                              // Piccola pausa per stabilità
+  }
 
-    shaft = !shaft;
-    driver.shaft(shaft);
-    driver.push(); // Forza l'invio del comando
+  // Esegue un passo
+  digitalWrite(STEP_PIN, HIGH);
+  delayMicroseconds(1000);
+  digitalWrite(STEP_PIN, LOW);
+  delayMicroseconds(1000);
 
-    Serial.print("Cambio direzione: ");
-    Serial.println(driver.shaft() ? "Reverse" : "Forward");
-
-    delay(500); // Piccola pausa per stabilità
+  // Incrementa il contatore passi
+  stepCount++;
 }
