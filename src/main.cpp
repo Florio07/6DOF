@@ -1,55 +1,84 @@
+#include <Arduino.h>
 #include <TMCStepper.h>
 
-// Definizioni dei pin
-#define RX_PIN  19    // RX di Arduino collegato al TX del driver
-#define TX_PIN  18    // TX di Arduino collegato al RX del driver
-#define STEP_PIN 3    // Pin di Step (D3)
+// Definizione pin
+#define STEP_PIN        6   // Pin STEP collegato al TMC2208
+#define EN_PIN        3   // Pin ENABLE collegato al TMC2208
+#define DIR_PIN        2   // Pin DIR collegato al TMC2208
+#define SW_RX          0   // UART RX Mega2560 -> TX TMC2208
+#define SW_TX          1   // UART TX Mega2560 -> RX TMC2208
+#define SERIAL_PORT Serial // Porta HardwareSerial per TMC2208
+#define DRIVER_ADDRESS 0b00 // Indirizzo del driver (default)
+#define R_SENSE 0.11f  // Resistenza di sense per il TMC2208
+#define MOTOR_STEPS 5000  // Numero di step prima dell'inversione
+#define STEP_DELAY  160   // Microsecondi tra un passo e l'altro
 
-// Parametri motore
-#define MAX_STEPS 5000  // Numero di passi prima di invertire la direzione
-
-// Impostazioni del driver
-#define SERIAL_PORT Serial2  // UART per la comunicazione con il TMC2208
-TMC2208Stepper driver(&SERIAL_PORT, 0.11);  // Inizializzazione driver
-
-// Variabili di controllo
-unsigned long stepCount = 0;
-bool reverseDirection = false;
+TMC2208Stepper driver(&SERIAL_PORT, R_SENSE);
+bool shaft = false;
 
 void setup() {
-  // Seriali
-  Serial.begin(115200);
-  SERIAL_PORT.begin(115200);  // Comunicazione con il driver
+    pinMode(STEP_PIN, OUTPUT);
+    pinMode(EN_PIN, OUTPUT);
+    pinMode(DIR_PIN, OUTPUT);
 
-  // Configurazione pin
-  pinMode(STEP_PIN, OUTPUT);
+    digitalWrite(EN_PIN, LOW); // Abilita il driver
+    
+    // Avvio comunicazione con il driver
+    SERIAL_PORT.begin(115200); // change to 115200 after testing
+    driver.begin();
+    delay(100); // Attesa per stabilizzazione
+    Serial.begin(115200);
+    while(!Serial);
+    
+    digitalWrite(EN_PIN, HIGH); // Abilita il driver
+    // Forza la modalità UART
+    driver.IHOLD_IRUN(0x10100); // Assicura che il driver sia attivo
+    driver.pdn_disable(true);      // Disabilita il controllo PDN
+    driver.mstep_reg_select(true); // Abilita il controllo via registro UART
+    
+    // Configurazione del driver
+    driver.rms_current(1000);
+    driver.microsteps(16);
+    driver.pwm_autoscale(true);
 
-  // Inizializzazione driver TMC2208
-  driver.begin();
-  driver.toff(4);            // Abilita il driver
-  driver.rms_current(1000);  // Imposta corrente a 1A RMS
-  driver.microsteps(16);     // Imposta micropassi a 16
-  driver.pwm_autoscale(true);  // Abilita modalità stealthChop
-  
-  // Imposta direzione iniziale
-  driver.shaft(reverseDirection);  
+    driver.GSTAT(0b111); // Reset degli errori
+    driver.GCONF(driver.GCONF() | (1 << 0)); // Assicura che la direzione sia controllata via UART
+
+    
+
+    Serial.print("PDN_UART attivato: ");
+    Serial.println(driver.pdn_disable() ? "Sì" : "No");
+
+    // Controllo connessione UART
+    Serial.print("Versione driver: ");
+    Serial.println(driver.version());
+
+    // Verifica configurazione
+    Serial.print("GCONF: ");
+    Serial.println(driver.GCONF(), BIN);
+
+    delay(100); // Attesa per stabilizzazione
+    driver.shaft(shaft);
+    delay(10);
+    driver.shaft(shaft);
+    driver.toff(2);
+
 }
 
 void loop() {
-  // Se abbiamo raggiunto 5000 passi, invertiamo la direzione via UART
-  if (stepCount >= MAX_STEPS) {
-    reverseDirection = !reverseDirection;   // Cambia direzione
-    driver.shaft(reverseDirection);         // Invia il comando al driver
-    stepCount = 0;                           // Reset contatore passi
-    delay(500);                              // Piccola pausa per stabilità
-  }
+    //SERIAL_PORT.write(0x90); // Comando per leggere GSTAT
 
-  // Esegue un passo
-  digitalWrite(STEP_PIN, HIGH);
-  delayMicroseconds(1000);
-  digitalWrite(STEP_PIN, LOW);
-  delayMicroseconds(1000);
+    for (uint16_t i = 0; i < MOTOR_STEPS; i++) {
+        digitalWrite(STEP_PIN, HIGH);
+        delayMicroseconds(STEP_DELAY);
+        digitalWrite(STEP_PIN, LOW);
+        delayMicroseconds(STEP_DELAY);
+    }
 
-  // Incrementa il contatore passi
-  stepCount++;
+    digitalWrite(DIR_PIN, !digitalRead(DIR_PIN)); // Inverte la direzione
+
+    Serial.print("Cambio direzione: ");
+    Serial.println(digitalRead(DIR_PIN) ? "Reverse" : "Forward");
+
+    delay(500); // Piccola pausa per stabilità
 }
