@@ -1,76 +1,74 @@
 #include <Arduino.h>
+#include <TMCStepper.h>
 
-/**
- * Author Teemu Mäntykallio
- * Initializes the library and runs the stepper
- * motor in alternating directions.
- */
+// Definizione pin
+#define STEP_PIN        3   // Pin STEP collegato al TMC2208
+#define DIR_PIN        2   // Pin DIR collegato al TMC2208
+#define EN_PIN         6   // Pin ENABLE collegato al TMC2208
+#define SW_RX          0   // UART RX Mega2560 -> TX TMC2208
+#define SW_TX          1   // UART TX Mega2560 -> RX TMC2208
+#define SERIAL_PORT Serial // Porta HardwareSerial per TMC2208
+#define DRIVER_ADDRESS 0b00 // Indirizzo del driver (default)
+#define R_SENSE 0.11f  // Resistenza di sense per il TMC2208
+#define MOTOR_STEPS 5000  // Numero di step prima dell'inversione
+#define STEP_DELAY  160   // Microsecondi tra un passo e l'altro
 
- #include <TMCStepper.h>
+TMC2208Stepper driver(&SERIAL_PORT, R_SENSE);
+bool shaft = false;
 
- //#define EN_PIN           38 // Enable
- //#define DIR_PIN          55 // Direction
- #define STEP_PIN         3 // Step
- //#define CS_PIN           42 // Chip select
- //#define SW_MOSI          66 // Software Master Out Slave In (MOSI)
- //#define SW_MISO          44 // Software Master In Slave Out (MISO)
- //#define SW_SCK           64 // Software Slave Clock (SCK)
- #define SW_RX            0 // TMC2208/TMC2224 SoftwareSerial receive pin
- #define SW_TX            1 // TMC2208/TMC2224 SoftwareSerial transmit pin
- #define SERIAL_PORT Serial // TMC2208/TMC2224 HardwareSerial port
- #define DRIVER_ADDRESS 0b00 // TMC2209 Driver address according to MS1 and MS2
- 
- #define R_SENSE 0.11f // Match to your driver
-                       // SilentStepStick series use 0.11
-                       // UltiMachine Einsy and Archim2 boards use 0.2
-                       // Panucatt BSD2660 uses 0.1
-                       // Watterott TMC5160 uses 0.075
- 
- // Select your stepper driver type
- //TMC2130Stepper driver(CS_PIN, R_SENSE);                           // Hardware SPI
- //TMC2130Stepper driver(CS_PIN, R_SENSE, SW_MOSI, SW_MISO, SW_SCK); // Software SPI
- //TMC2660Stepper driver(CS_PIN, R_SENSE);                           // Hardware SPI
- //TMC2660Stepper driver(CS_PIN, R_SENSE, SW_MOSI, SW_MISO, SW_SCK);
- //TMC5160Stepper driver(CS_PIN, R_SENSE);
- //TMC5160Stepper driver(CS_PIN, R_SENSE, SW_MOSI, SW_MISO, SW_SCK);
- 
- TMC2208Stepper driver(&SERIAL_PORT, R_SENSE);                     // Hardware Serial
- //TMC2208Stepper driver(SW_RX, SW_TX, R_SENSE);                     // Software serial
- //TMC2209Stepper driver(&SERIAL_PORT, R_SENSE, DRIVER_ADDRESS);
- //TMC2209Stepper driver(SW_RX, SW_TX, R_SENSE, DRIVER_ADDRESS);
- 
- void setup() {
-   //pinMode(EN_PIN, OUTPUT);
-   pinMode(STEP_PIN, OUTPUT);
-   //pinMode(DIR_PIN, OUTPUT);
-   //digitalWrite(EN_PIN, LOW);      // Enable driver in hardware
- 
-                                   // Enable one according to your setup
- //SPI.begin();                    // SPI drivers
- SERIAL_PORT.begin(115200);      // HW UART drivers
- //driver.beginSerial(115200);     // SW UART drivers
- 
-   driver.begin();                 //  SPI: Init CS pins and possible SW SPI pins
-                                   // UART: Init SW UART (if selected) with default 115200 baudrate
-   //driver.toff(5);                 // Enables driver in software
-   driver.rms_current(600);        // Set motor RMS current
-   driver.microsteps(16);          // Set microsteps to 1/16th
- 
- //driver.en_pwm_mode(true);       // Toggle stealthChop on TMC2130/2160/5130/5160
- //driver.en_spreadCycle(false);   // Toggle spreadCycle on TMC2208/2209/2224
-   driver.pwm_autoscale(true);     // Needed for stealthChop
- }
- 
- bool shaft = false;
- 
- void loop() {
-   // Run 5000 steps and switch direction in software
-   for (uint16_t i = 5000; i>0; i--) {
-     digitalWrite(STEP_PIN, HIGH);
-     delayMicroseconds(160);
-     digitalWrite(STEP_PIN, LOW);
-     delayMicroseconds(160);
-   }
-   shaft = !shaft;
-   driver.shaft(shaft);
- }
+void setup() {
+    pinMode(STEP_PIN, OUTPUT);
+    pinMode(DIR_PIN, OUTPUT);
+    pinMode(EN_PIN, OUTPUT);
+    
+    digitalWrite(EN_PIN, LOW); // Abilita il driver
+    // Avvio comunicazione con il driver
+    SERIAL_PORT.begin(9600); // change to 115200 after testing
+    driver.begin();
+    
+    // Forza la modalità UART
+    driver.pdn_disable(true);      // Disabilita il controllo PDN
+    driver.mstep_reg_select(true); // Abilita il controllo via registro UART
+    
+    // Configurazione del driver
+    driver.rms_current(1000);
+    driver.microsteps(16);
+    driver.pwm_autoscale(true);
+
+    // Controllo connessione UART
+    Serial.print("Versione driver: ");
+    Serial.println(driver.version());
+
+    // Verifica configurazione
+    Serial.print("GCONF: ");
+    Serial.println(driver.GCONF(), BIN);
+
+    delay(100); // Attesa per stabilizzazione
+    driver.shaft(shaft);
+    delay(10);
+    driver.shaft(shaft);
+
+    Serial.begin(9600);
+    delay(1000);
+    digitalWrite(EN_PIN, HIGH); // Abilita il driver
+}
+
+void loop() {
+    for (uint16_t i = 0; i < MOTOR_STEPS; i++) {
+        digitalWrite(STEP_PIN, HIGH);
+        delayMicroseconds(STEP_DELAY);
+        digitalWrite(STEP_PIN, LOW);
+        delayMicroseconds(STEP_DELAY);
+    }
+
+    /*shaft = !shaft;
+    driver.shaft(shaft);
+    driver.push(); // Forza l'invio del comando*/
+
+    digitalWrite(DIR_PIN, !digitalRead(DIR_PIN));
+
+    Serial.print("Cambio direzione: ");
+    Serial.println(driver.shaft() ? "Reverse" : "Forward");
+
+    delay(500); // Piccola pausa per stabilità
+}
